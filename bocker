@@ -21,18 +21,22 @@ function bocker_init() { #HELP Create an image from a directory:\nBOCKER init <d
 }
 
 function bocker_pull() { #HELP Pull an image from Docker Hub:\nBOCKER pull <name> <tag>
-	token="$(curl -sL -o /dev/null -D- -H 'X-Docker-Token: true' "https://index.docker.io/v1/repositories/$1/images" | tr -d '\r' | awk -F ': *' '$1 == "X-Docker-Token" { print $2 }')"
-	registry='https://registry-1.docker.io/v1'
-	id="$(curl -sL -H "Authorization: Token $token" "$registry/repositories/$1/tags/$2" | sed 's/"//g')"
-	[[ "${#id}" -ne 64 ]] && echo "No image named '$1:$2' exists" && exit 1
-	ancestry="$(curl -sL -H "Authorization: Token $token" "$registry/images/$id/ancestry")"
-	IFS=',' && ancestry=(${ancestry//[\[\] \"]/}) && IFS=' \n\t'; tmp_uuid="$(uuidgen)" && mkdir /tmp/"$tmp_uuid"
-	for id in "${ancestry[@]}"; do
-		curl -#L -H "Authorization: Token $token" "$registry/images/$id/layer" -o /tmp/"$tmp_uuid"/layer.tar
-		tar xf /tmp/"$tmp_uuid"/layer.tar -C /tmp/"$tmp_uuid" && rm /tmp/"$tmp_uuid"/layer.tar
-	done
-	echo "$1:$2" > /tmp/"$tmp_uuid"/img.source
-	bocker_init /tmp/"$tmp_uuid" && rm -rf /tmp/"$tmp_uuid"
+
+
+    token=$(curl "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/$1:pull"  | jq '.token'| sed 's/\"//g')
+    registry_base='https://registry-1.docker.io/v2'
+    tmp_uuid="$(uuidgen)" && mkdir /tmp/"$tmp_uuid"
+
+    manifest=$(curl -sL -H "Authorization: Bearer $token" "$registry_base/library/$1/manifests/$2" | jq -r '.fsLayers' | jq -r '.[].blobSum' )
+    echo ${#manifest}
+     [[ "${#manifest}" -lt 1 ]] && echo "No image named '$1:$2' exists" && exit 1
+
+    for id in ${manifest[@]}; do
+        curl -#L -H "Authorization: Bearer $token" "$registry_base/library/$1/blobs/$id" -o /tmp/"$tmp_uuid"/layer.tar
+        tar xf /tmp/"$tmp_uuid"/layer.tar -C /tmp/"$tmp_uuid"
+    done
+    echo "$1:$2" > /tmp/"$tmp_uuid"/img.source
+    bocker_init /tmp/"$tmp_uuid" && rm -rf /tmp/"$tmp_uuid"
 }
 
 function bocker_rm() { #HELP Delete an image or container:\nBOCKER rm <image_id or container_id>
